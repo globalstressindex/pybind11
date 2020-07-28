@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import pytest
 
 from pybind11_tests import virtual_functions as m
@@ -369,3 +370,9 @@ def test_inherited_virtuals():
     assert obj.unlucky_number() == -7
     assert obj.lucky_number() == -1.375
     assert obj.say_everything() == "BT -7"
+
+
+def test_issue_1454():
+    # Fix issue #1454 (crash when acquiring/releasing GIL on another thread in Python 2.7)
+    m.test_gil()
+    m.test_gil_from_thread()

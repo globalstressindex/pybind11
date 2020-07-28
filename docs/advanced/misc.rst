@@ -7,13 +7,32 @@ General notes regarding convenience macros
 ==========================================
 
 pybind11 provides a few convenience macros such as
-:func:`PYBIND11_MAKE_OPAQUE` and :func:`PYBIND11_DECLARE_HOLDER_TYPE`, and
-``PYBIND11_OVERLOAD_*``. Since these are "just" macros that are evaluated
-in the preprocessor (which has no concept of types), they *will* get confused
-by commas in a template argument such as ``PYBIND11_OVERLOAD(MyReturnValue<T1,
-T2>, myFunc)``. In this case, the preprocessor assumes that the comma indicates
-the beginning of the next parameter. Use a ``typedef`` to bind the template to
-another name and use it in the macro to avoid this problem.
+:func:`PYBIND11_DECLARE_HOLDER_TYPE` and ``PYBIND11_OVERLOAD_*``. Since these
+are "just" macros that are evaluated in the preprocessor (which has no concept
+of types), they *will* get confused by commas in a template argument; for
+example, consider:
+
+.. code-block:: cpp
+
+    PYBIND11_OVERLOAD(MyReturnType<T1, T2>, Class<T3, T4>, func)
+
+The limitation of the C preprocessor interprets this as five arguments (with new
+arguments beginning after each comma) rather than three.  To get around this,
+there are two alternatives: you can use a type alias, or you can wrap the type
+using the ``PYBIND11_TYPE`` macro:
+
+.. code-block:: cpp
+
+    // Version 1: using a type alias
+    using ReturnType = MyReturnType<T1, T2>;
+    using ClassType = Class<T3, T4>;
+    PYBIND11_OVERLOAD(ReturnType, ClassType, func);
+
+    // Version 2: using the PYBIND11_TYPE macro:
+    PYBIND11_OVERLOAD(PYBIND11_TYPE(MyReturnType<T1, T2>),
+                      PYBIND11_TYPE(Class<T3, T4>), func)
+
+The ``PYBIND11_MAKE_OPAQUE`` macro does *not* require the above workarounds.
 
 .. _gil:
 
@@ -137,7 +156,7 @@ Naturally, both methods will fail when there are cyclic dependencies.
 
 Note that pybind11 code compiled with hidden-by-default symbol visibility (e.g.
 via the command line flag ``-fvisibility=hidden`` on GCC/Clang), which is
-required proper pybind11 functionality, can interfere with the ability to
+required for proper pybind11 functionality, can interfere with the ability to
 access types defined in another extension module.  Working around this requires
 manually exporting types that are accessed by multiple extension modules;
 pybind11 provides a macro to do just this:
@@ -199,7 +218,7 @@ collected:
 
 Both approaches also expose a potentially dangerous ``_cleanup`` attribute in
 Python, which may be undesirable from an API standpoint (a premature explicit
-call from Python might lead to undefined behavior). Yet another approach that 
+call from Python might lead to undefined behavior). Yet another approach that
 avoids this issue involves weak reference with a cleanup callback:
 
 .. code-block:: cpp
@@ -264,9 +283,9 @@ work, it is important that all lines are indented consistently, i.e.:
         ----------
     )mydelimiter");
 
-By default, pybind11 automatically generates and prepends a signature to the docstring of a function 
+By default, pybind11 automatically generates and prepends a signature to the docstring of a function
 registered with ``module::def()`` and ``class_::def()``. Sometimes this
-behavior is not desirable, because you want to provide your own signature or remove 
+behavior is not desirable, because you want to provide your own signature or remove
 the docstring completely to exclude the function from the Sphinx documentation.
 The class ``options`` allows you to selectively suppress auto-generated signatures:
 
@@ -279,8 +298,8 @@ The class ``options`` allows you to selectively suppress auto-generated signatur
         m.def("add", [](int a, int b) { return a + b; }, "A function which adds two numbers");
     }
 
-Note that changes to the settings affect only function bindings created during the 
-lifetime of the ``options`` instance. When it goes out of scope at the end of the module's init function, 
+Note that changes to the settings affect only function bindings created during the
+lifetime of the ``options`` instance. When it goes out of scope at the end of the module's init function,
 the default settings are restored to prevent unwanted side effects.
 
 .. [#f4] http://www.sphinx-doc.org

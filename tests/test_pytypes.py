@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+from __future__ import division
 import pytest
 import sys
 
@@ -5,21 +7,40 @@ from pybind11_tests import pytypes as m
 from pybind11_tests import debug_enabled
 
 
+def test_int(doc):
+    assert doc(m.get_int) == "get_int() -> int"
+
+
+def test_iterator(doc):
+    assert doc(m.get_iterator) == "get_iterator() -> Iterator"
+
+
+def test_iterable(doc):
+    assert doc(m.get_iterable) == "get_iterable() -> Iterable"
+
+
 def test_list(capture, doc):
     with capture:
         lst = m.get_list()
-        assert lst == ["overwritten"]
+        assert lst == ["inserted-0", "overwritten", "inserted-2"]
 
         lst.append("value2")
         m.print_list(lst)
     assert capture.unordered == """
         Entry at position 0: value
-        list item 0: overwritten
-        list item 1: value2
+        list item 0: inserted-0
+        list item 1: overwritten
+        list item 2: inserted-2
+        list item 3: value2
     """
 
     assert doc(m.get_list) == "get_list() -> list"
     assert doc(m.print_list) == "print_list(arg0: list) -> None"
+
+
+def test_none(capture, doc):
+    assert doc(m.get_none) == "get_none() -> None"
+    assert doc(m.print_none) == "print_none(arg0: None) -> None"
 
 
 def test_set(capture, doc):
@@ -36,6 +57,10 @@ def test_set(capture, doc):
         key: key4
     """
 
+    assert not m.set_contains(set([]), 42)
+    assert m.set_contains({42}, 42)
+    assert m.set_contains({"foo"}, "foo")
+
     assert doc(m.get_list) == "get_list() -> list"
     assert doc(m.print_list) == "print_list(arg0: list) -> None"
 
@@ -51,6 +76,10 @@ def test_dict(capture, doc):
         key: key, value=value
         key: key2, value=value2
     """
+
+    assert not m.dict_contains({}, 42)
+    assert m.dict_contains({42: None}, 42)
+    assert m.dict_contains({"foo": None}, "foo")
 
     assert doc(m.get_dict) == "get_dict() -> dict"
     assert doc(m.print_dict) == "print_dict(arg0: dict) -> None"
@@ -238,3 +267,83 @@ def test_hash():
     assert m.hash_function(Hashable(42)) == 42
     with pytest.raises(TypeError):
         m.hash_function(Unhashable())
+
+
+def test_number_protocol():
+    for a, b in [(1, 1), (3, 5)]:
+        li = [a == b, a != b, a < b, a <= b, a > b, a >= b, a + b,
+              a - b, a * b, a / b, a | b, a & b, a ^ b, a >> b, a << b]
+        assert m.test_number_protocol(a, b) == li
+
+
+def test_list_slicing():
+    li = list(range(100))
+    assert li[::2] == m.test_list_slicing(li)
+
+
+@pytest.mark.parametrize('method, args, fmt, expected_view', [
+    (m.test_memoryview_object, (b'red',), 'B', b'red'),
+    (m.test_memoryview_buffer_info, (b'green',), 'B', b'green'),
+    (m.test_memoryview_from_buffer, (False,), 'h', [3, 1, 4, 1, 5]),
+    (m.test_memoryview_from_buffer, (True,), 'H', [2, 7, 1, 8]),
+    (m.test_memoryview_from_buffer_nativeformat, (), '@i', [4, 7, 5]),
+])
+def test_memoryview(method, args, fmt, expected_view):
+    view = method(*args)
+    assert isinstance(view, memoryview)
+    assert view.format == fmt
+    if isinstance(expected_view, bytes) or sys.version_info[0] >= 3:
+        view_as_list = list(view)
+    else:
+        # Using max to pick non-zero byte (big-endian vs little-endian).
+        view_as_list = [max([ord(c) for c in s]) for s in view]
+    assert view_as_list == list(expected_view)
+
+
+@pytest.mark.skipif(
+    not hasattr(sys, 'getrefcount'),
+    reason='getrefcount is not available')
+@pytest.mark.parametrize('method', [
+    m.test_memoryview_object,
+    m.test_memoryview_buffer_info,
+])
+def test_memoryview_refcount(method):
+    buf = b'\x0a\x0b\x0c\x0d'
+    ref_before = sys.getrefcount(buf)
+    view = method(buf)
+    ref_after = sys.getrefcount(buf)
+    assert ref_before < ref_after
+    assert list(view) == list(buf)
+
+
+def test_memoryview_from_buffer_empty_shape():
+    view = m.test_memoryview_from_buffer_empty_shape()
+    assert isinstance(view, memoryview)
+    assert view.format == 'B'
+    if sys.version_info.major < 3:
+        # Python 2 behavior is weird, but Python 3 (the future) is fine.
+        # PyPy3 has <memoryview, while CPython 2 has <memory
+        assert bytes(view).startswith(b'<memory')
+    else:
+        assert bytes(view) == b''
+
+
+def test_test_memoryview_from_buffer_invalid_strides():
+    with pytest.raises(RuntimeError):
+        m.test_memoryview_from_buffer_invalid_strides()
+
+
+def test_test_memoryview_from_buffer_nullptr():
+    if sys.version_info.major < 3:
+        m.test_memoryview_from_buffer_nullptr()
+    else:
+        with pytest.raises(ValueError):
+            m.test_memoryview_from_buffer_nullptr()
+
+
+@pytest.mark.skipif(sys.version_info.major < 3, reason='API not available')
+def test_memoryview_from_memory():
+    view = m.test_memoryview_from_memory()
+    assert isinstance(view, memoryview)
+    assert view.format == 'B'
+    assert bytes(view) == b'\xff\xe1\xab\x37'

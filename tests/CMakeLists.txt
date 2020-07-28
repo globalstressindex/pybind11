@@ -8,6 +8,7 @@
 cmake_minimum_required(VERSION 2.8.12)
 
 option(PYBIND11_WERROR  "Report all warnings as errors"  OFF)
+set(PYBIND11_TEST_OVERRIDE "" CACHE STRING "Tests from ;-separated list of *.cpp files will be built instead of all tests")
 
 if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
     # We're being loaded directly, i.e. not via add_subdirectory, so make this
@@ -26,6 +27,7 @@ endif()
 
 # Full set of test files (you can override these; see below)
 set(PYBIND11_TEST_FILES
+  test_async.cpp
   test_buffers.cpp
   test_builtin_casters.cpp
   test_call_policies.cpp
@@ -34,12 +36,14 @@ set(PYBIND11_TEST_FILES
   test_class.cpp
   test_constants_and_functions.cpp
   test_copy_move.cpp
+  test_custom_type_casters.cpp
   test_docstring_options.cpp
   test_eigen.cpp
   test_enum.cpp
   test_eval.cpp
   test_exceptions.cpp
   test_factory_constructors.cpp
+  test_gil_scoped.cpp
   test_iostream.cpp
   test_kwargs_and_defaults.cpp
   test_local_bindings.cpp
@@ -57,6 +61,8 @@ set(PYBIND11_TEST_FILES
   test_smart_ptr.cpp
   test_stl.cpp
   test_stl_binders.cpp
+  test_tagbased_polymorphic.cpp
+  test_union.cpp
   test_virtual_functions.cpp
 )
 
@@ -66,6 +72,13 @@ set(PYBIND11_TEST_FILES
 #     cmake -DPYBIND11_TEST_OVERRIDE= ..
 if (PYBIND11_TEST_OVERRIDE)
   set(PYBIND11_TEST_FILES ${PYBIND11_TEST_OVERRIDE})
+endif()
+
+# Skip test_async for Python < 3.5
+list(FIND PYBIND11_TEST_FILES test_async.cpp PYBIND11_TEST_FILES_ASYNC_I)
+if((PYBIND11_TEST_FILES_ASYNC_I GREATER -1) AND ("${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}" VERSION_LESS 3.5))
+  message(STATUS "Skipping test_async because Python version ${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR} < 3.5")
+  list(REMOVE_AT PYBIND11_TEST_FILES ${PYBIND11_TEST_FILES_ASYNC_I})
 endif()
 
 string(REPLACE ".cpp" ".py" PYBIND11_PYTEST_FILES "${PYBIND11_TEST_FILES}")
@@ -80,6 +93,12 @@ set(PYBIND11_CROSS_MODULE_TESTS
   test_stl_binders.py
 )
 
+set(PYBIND11_CROSS_MODULE_GIL_TESTS
+  test_gil_scoped.py
+)
+
+option(DOWNLOAD_EIGEN "Download EIGEN (requires CMake 3.11+)" OFF)
+
 # Check if Eigen is available; if not, remove from PYBIND11_TEST_FILES (but
 # keep it in PYBIND11_PYTEST_FILES, so that we get the "eigen is not installed"
 # skip message).
@@ -88,18 +107,42 @@ if(PYBIND11_TEST_FILES_EIGEN_I GREATER -1)
   # Try loading via newer Eigen's Eigen3Config first (bypassing tools/FindEigen3.cmake).
   # Eigen 3.3.1+ exports a cmake 3.0+ target for handling dependency requirements, but also
   # produces a fatal error if loaded from a pre-3.0 cmake.
-  if (NOT CMAKE_VERSION VERSION_LESS 3.0)
-    find_package(Eigen3 3.2.7 QUIET CONFIG)
-    if (EIGEN3_FOUND)
-      if (EIGEN3_VERSION_STRING AND NOT EIGEN3_VERSION_STRING VERSION_LESS 3.3.1)
-        set(PYBIND11_EIGEN_VIA_TARGET 1)
+  if(DOWNLOAD_EIGEN)
+    if(CMAKE_VERSION VERSION_LESS 3.11)
+      message(FATAL_ERROR "CMake 3.11+ required when using DOWNLOAD_EIGEN")
+    endif()
+
+    set(EIGEN3_VERSION_STRING "3.3.7")
+
+    include(FetchContent)
+    FetchContent_Declare(
+      eigen
+      GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+      GIT_TAG ${EIGEN3_VERSION_STRING}
+    )
+
+    FetchContent_GetProperties(eigen)
+    if(NOT eigen_POPULATED)
+      message(STATUS "Downloading Eigen")
+      FetchContent_Populate(eigen)
+    endif()
+
+    set(EIGEN3_INCLUDE_DIR ${eigen_SOURCE_DIR})
+    set(EIGEN3_FOUND TRUE)
+  else()
+    if (NOT CMAKE_VERSION VERSION_LESS 3.0)
+      find_package(Eigen3 3.2.7 QUIET CONFIG)
+      if (EIGEN3_FOUND)
+        if (EIGEN3_VERSION_STRING AND NOT EIGEN3_VERSION_STRING VERSION_LESS 3.3.1)
+          set(PYBIND11_EIGEN_VIA_TARGET TRUE)
+        endif()
       endif()
     endif()
-  endif()
-  if (NOT EIGEN3_FOUND)
-    # Couldn't load via target, so fall back to allowing module mode finding, which will pick up
-    # tools/FindEigen3.cmake
-    find_package(Eigen3 3.2.7 QUIET)
+    if (NOT EIGEN3_FOUND)
+      # Couldn't load via target, so fall back to allowing module mode finding, which will pick up
+      # tools/FindEigen3.cmake
+      find_package(Eigen3 3.2.7 QUIET)
+    endif()
   endif()
 
   if(EIGEN3_FOUND)
@@ -112,7 +155,7 @@ if(PYBIND11_TEST_FILES_EIGEN_I GREATER -1)
     message(STATUS "Building tests with Eigen v${EIGEN3_VERSION}")
   else()
     list(REMOVE_AT PYBIND11_TEST_FILES ${PYBIND11_TEST_FILES_EIGEN_I})
-    message(STATUS "Building tests WITHOUT Eigen")
+    message(STATUS "Building tests WITHOUT Eigen, use -DDOWNLOAD_EIGEN on CMake 3.11+ to download")
   endif()
 endif()
 
@@ -123,15 +166,23 @@ find_package(Boost 1.56)
 function(pybind11_enable_warnings target_name)
   if(MSVC)
     target_compile_options(${target_name} PRIVATE /W4)
-  else()
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "(GNU|Intel|Clang)")
       target_compile_options(${target_name} PRIVATE -Wall -Wextra -Wconversion -Wcast-qual -Wdeprecated)
   endif()
 
   if(PYBIND11_WERROR)
     if(MSVC)
       target_compile_options(${target_name} PRIVATE /WX)
-    else()
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "(GNU|Intel|Clang)")
       target_compile_options(${target_name} PRIVATE -Werror)
+    endif()
+  endif()
+
+  if(CMAKE_CXX_STANDARD AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND PYTHON_VERSION VERSION_LESS 3.0)
+    if(CMAKE_CXX_STANDARD LESS 17)
+      target_compile_options(${target_name} PUBLIC -Wno-deprecated-register)
+    else()
+      target_compile_options(${target_name} PUBLIC -Wno-register)
     endif()
   endif()
 endfunction()
@@ -143,6 +194,14 @@ foreach(t ${PYBIND11_CROSS_MODULE_TESTS})
   list(FIND PYBIND11_PYTEST_FILES ${t} i)
   if (i GREATER -1)
     list(APPEND test_targets pybind11_cross_module_tests)
+    break()
+  endif()
+endforeach()
+
+foreach(t ${PYBIND11_CROSS_MODULE_GIL_TESTS})
+  list(FIND PYBIND11_PYTEST_FILES ${t} i)
+  if (i GREATER -1)
+    list(APPEND test_targets cross_module_gil_utils)
     break()
   endif()
 endforeach()
@@ -178,10 +237,10 @@ foreach(target ${test_targets})
 
   # Always write the output file directly into the 'tests' directory (even on MSVC)
   if(NOT CMAKE_LIBRARY_OUTPUT_DIRECTORY)
-    set_target_properties(${target} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${testdir})
+    set_target_properties(${target} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${testdir}")
     foreach(config ${CMAKE_CONFIGURATION_TYPES})
       string(TOUPPER ${config} config)
-      set_target_properties(${target} PROPERTIES LIBRARY_OUTPUT_DIRECTORY_${config} ${testdir})
+      set_target_properties(${target} PROPERTIES LIBRARY_OUTPUT_DIRECTORY_${config} "${testdir}")
     endforeach()
   endif()
 endforeach()
