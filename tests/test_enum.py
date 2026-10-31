@@ -1,4 +1,10 @@
+# ruff: noqa: SIM201 SIM300 SIM202
+from __future__ import annotations
+
+import re
+
 import pytest
+
 from pybind11_tests import enums as m
 
 
@@ -6,38 +12,96 @@ def test_unscoped_enum():
     assert str(m.UnscopedEnum.EOne) == "UnscopedEnum.EOne"
     assert str(m.UnscopedEnum.ETwo) == "UnscopedEnum.ETwo"
     assert str(m.EOne) == "UnscopedEnum.EOne"
+    assert repr(m.UnscopedEnum.EOne) == "<UnscopedEnum.EOne: 1>"
+    assert repr(m.UnscopedEnum.ETwo) == "<UnscopedEnum.ETwo: 2>"
+    assert repr(m.EOne) == "<UnscopedEnum.EOne: 1>"
+
+    # name property
+    assert m.UnscopedEnum.EOne.name == "EOne"
+    assert m.UnscopedEnum.EOne.value == 1
+    assert m.UnscopedEnum.ETwo.name == "ETwo"
+    assert m.UnscopedEnum.ETwo.value == 2
+    assert m.EOne is m.UnscopedEnum.EOne
+    # name, value readonly
+    with pytest.raises(AttributeError):
+        m.UnscopedEnum.EOne.name = ""
+    with pytest.raises(AttributeError):
+        m.UnscopedEnum.EOne.value = 10
+    # name, value returns a copy
+    # TODO: Neither the name nor value tests actually check against aliasing.
+    # Use a mutable type that has reference semantics.
+    nonaliased_name = m.UnscopedEnum.EOne.name
+    nonaliased_name = "bar"  # noqa: F841
+    assert m.UnscopedEnum.EOne.name == "EOne"
+    nonaliased_value = m.UnscopedEnum.EOne.value
+    nonaliased_value = 10  # noqa: F841
+    assert m.UnscopedEnum.EOne.value == 1
+
     # __members__ property
-    assert m.UnscopedEnum.__members__ == \
-        {"EOne": m.UnscopedEnum.EOne, "ETwo": m.UnscopedEnum.ETwo}
+    assert m.UnscopedEnum.__members__ == {
+        "EOne": m.UnscopedEnum.EOne,
+        "ETwo": m.UnscopedEnum.ETwo,
+        "EThree": m.UnscopedEnum.EThree,
+    }
     # __members__ readonly
     with pytest.raises(AttributeError):
         m.UnscopedEnum.__members__ = {}
     # __members__ returns a copy
-    foo = m.UnscopedEnum.__members__
-    foo["bar"] = "baz"
-    assert m.UnscopedEnum.__members__ == \
-        {"EOne": m.UnscopedEnum.EOne, "ETwo": m.UnscopedEnum.ETwo}
+    nonaliased_members = m.UnscopedEnum.__members__
+    nonaliased_members["bar"] = "baz"
+    assert m.UnscopedEnum.__members__ == {
+        "EOne": m.UnscopedEnum.EOne,
+        "ETwo": m.UnscopedEnum.ETwo,
+        "EThree": m.UnscopedEnum.EThree,
+    }
 
-    assert m.UnscopedEnum.__doc__ == \
-        '''An unscoped enumeration
+    for docstring_line in [
+        "An unscoped enumeration",
+        "Members:",
+        "  EOne : Docstring for EOne",
+        "  ETwo : Docstring for ETwo",
+        "  EThree : Docstring for EThree",
+    ]:
+        assert docstring_line in m.UnscopedEnum.__doc__
 
-Members:
-
-  EOne : Docstring for EOne
-
-  ETwo : Docstring for ETwo''' or m.UnscopedEnum.__doc__ == \
-        '''An unscoped enumeration
-
-Members:
-
-  ETwo : Docstring for ETwo
-
-  EOne : Docstring for EOne'''
-
-    # no TypeError exception for unscoped enum ==/!= int comparisons
+    # Unscoped enums will accept ==/!= int comparisons
     y = m.UnscopedEnum.ETwo
     assert y == 2
+    assert 2 == y
     assert y != 3
+    assert 3 != y
+    # Compare with None
+    assert y != None
+    assert not (y == None)
+    # Compare with an object
+    assert y != object()
+    assert not (y == object())
+    # Compare with string
+    assert y != "2"
+    assert "2" != y
+    assert not ("2" == y)
+    assert not (y == "2")
+
+    with pytest.raises(TypeError):
+        y < object()  # noqa: B015
+
+    with pytest.raises(TypeError):
+        y <= object()  # noqa: B015
+
+    with pytest.raises(TypeError):
+        y > object()  # noqa: B015
+
+    with pytest.raises(TypeError):
+        y >= object()  # noqa: B015
+
+    with pytest.raises(TypeError):
+        y | object()
+
+    with pytest.raises(TypeError):
+        y & object()
+
+    with pytest.raises(TypeError):
+        y ^ object()
 
     assert int(m.UnscopedEnum.ETwo) == 2
     assert str(m.UnscopedEnum(2)) == "UnscopedEnum.ETwo"
@@ -56,17 +120,37 @@ Members:
     assert not (m.UnscopedEnum.ETwo < m.UnscopedEnum.EOne)
     assert not (2 < m.UnscopedEnum.EOne)
 
+    # arithmetic
+    assert m.UnscopedEnum.EOne & m.UnscopedEnum.EThree == m.UnscopedEnum.EOne
+    assert m.UnscopedEnum.EOne | m.UnscopedEnum.ETwo == m.UnscopedEnum.EThree
+    assert m.UnscopedEnum.EOne ^ m.UnscopedEnum.EThree == m.UnscopedEnum.ETwo
+
 
 def test_scoped_enum():
     assert m.test_scoped_enum(m.ScopedEnum.Three) == "ScopedEnum::Three"
     z = m.ScopedEnum.Two
     assert m.test_scoped_enum(z) == "ScopedEnum::Two"
 
-    # expected TypeError exceptions for scoped enum ==/!= int comparisons
+    # Scoped enums will *NOT* accept ==/!= int comparisons (Will always return False)
+    assert not z == 3
+    assert not 3 == z
+    assert z != 3
+    assert 3 != z
+    # Compare with None
+    assert z != None
+    assert not (z == None)
+    # Compare with an object
+    assert z != object()
+    assert not (z == object())
+    # Scoped enums will *NOT* accept >, <, >= and <= int comparisons (Will throw exceptions)
     with pytest.raises(TypeError):
-        assert z == 2
+        z > 3  # noqa: B015
     with pytest.raises(TypeError):
-        assert z != 3
+        z < 3  # noqa: B015
+    with pytest.raises(TypeError):
+        z >= 3  # noqa: B015
+    with pytest.raises(TypeError):
+        z <= 3  # noqa: B015
 
     # order
     assert m.ScopedEnum.Two < m.ScopedEnum.Three
@@ -80,6 +164,8 @@ def test_scoped_enum():
 def test_implicit_conversion():
     assert str(m.ClassWithUnscopedEnum.EMode.EFirstMode) == "EMode.EFirstMode"
     assert str(m.ClassWithUnscopedEnum.EFirstMode) == "EMode.EFirstMode"
+    assert repr(m.ClassWithUnscopedEnum.EMode.EFirstMode) == "<EMode.EFirstMode: 1>"
+    assert repr(m.ClassWithUnscopedEnum.EFirstMode) == "<EMode.EFirstMode: 1>"
 
     f = m.ClassWithUnscopedEnum.test_function
     first = m.ClassWithUnscopedEnum.EFirstMode
@@ -104,7 +190,7 @@ def test_implicit_conversion():
     x[f(first)] = 3
     x[f(second)] = 4
     # Hashing test
-    assert str(x) == "{EMode.EFirstMode: 3, EMode.ESecondMode: 4}"
+    assert repr(x) == "{<EMode.EFirstMode: 1>: 3, <EMode.ESecondMode: 2>: 4}"
 
 
 def test_binary_operators():
@@ -116,6 +202,7 @@ def test_binary_operators():
     assert int(m.Flags.Read | m.Flags.Execute) == 5
     assert int(m.Flags.Write | m.Flags.Execute) == 3
     assert int(m.Flags.Write | 1) == 3
+    assert ~m.Flags.Write == -3
 
     state = m.Flags.Read | m.Flags.Write
     assert (state & m.Flags.Read) != 0
@@ -131,7 +218,159 @@ def test_binary_operators():
 def test_enum_to_int():
     m.test_enum_to_int(m.Flags.Read)
     m.test_enum_to_int(m.ClassWithUnscopedEnum.EMode.EFirstMode)
+    m.test_enum_to_int(m.ScopedCharEnum.Positive)
+    m.test_enum_to_int(m.ScopedBoolEnum.TRUE)
     m.test_enum_to_uint(m.Flags.Read)
     m.test_enum_to_uint(m.ClassWithUnscopedEnum.EMode.EFirstMode)
+    m.test_enum_to_uint(m.ScopedCharEnum.Positive)
+    m.test_enum_to_uint(m.ScopedBoolEnum.TRUE)
     m.test_enum_to_long_long(m.Flags.Read)
     m.test_enum_to_long_long(m.ClassWithUnscopedEnum.EMode.EFirstMode)
+    m.test_enum_to_long_long(m.ScopedCharEnum.Positive)
+    m.test_enum_to_long_long(m.ScopedBoolEnum.TRUE)
+
+
+@pytest.mark.parametrize("enum_name", ["UnscopedInt32Enum", "UnscopedUInt32Enum"])
+def test_scalar_comparison_with_index_object(enum_name):
+    # An unsigned underlying type must compare like a signed one against objects
+    # that only implement __index__ (e.g. numpy integers).
+    class Index:
+        def __index__(self):
+            return 3
+
+    three = getattr(m, enum_name).Three
+    assert three == 3
+    assert three == Index()
+    assert not three != Index()
+    assert three != 4
+    np = pytest.importorskip("numpy")
+    assert three == np.int32(3)
+    assert three == np.uint64(3)
+    assert not three != np.int64(3)
+    assert three != np.int32(4)
+
+
+def test_duplicate_enum_name():
+    with pytest.raises(ValueError) as excinfo:
+        m.register_bad_enum()
+    assert str(excinfo.value) == 'SimpleEnum: element "ONE" already exists!'
+
+
+def test_char_underlying_enum():  # Issue #1331/PR #1334:
+    assert type(m.ScopedCharEnum.Positive.__int__()) is int
+    assert int(m.ScopedChar16Enum.Zero) == 0
+    assert hash(m.ScopedChar32Enum.Positive) == 1
+    assert type(m.ScopedCharEnum.Positive.__getstate__()) is int
+    assert m.ScopedWCharEnum(1) == m.ScopedWCharEnum.Positive
+    with pytest.raises(TypeError):
+        # Even if the underlying type is char, only an int can be used to construct the enum:
+        m.ScopedCharEnum("0")
+
+
+def test_bool_underlying_enum():
+    assert type(m.ScopedBoolEnum.TRUE.__int__()) is int
+    assert int(m.ScopedBoolEnum.FALSE) == 0
+    assert hash(m.ScopedBoolEnum.TRUE) == 1
+    assert type(m.ScopedBoolEnum.TRUE.__getstate__()) is int
+    assert m.ScopedBoolEnum(1) == m.ScopedBoolEnum.TRUE
+    # Enum could construct with a bool
+    # (bool is a strict subclass of int, and False will be converted to 0)
+    assert m.ScopedBoolEnum(False) == m.ScopedBoolEnum.FALSE
+
+
+def test_docstring_signatures():
+    for enum_type in [m.ScopedEnum, m.UnscopedEnum]:
+        for attr in enum_type.__dict__.values():
+            # Issue #2623/PR #2637: Add argument names to enum_ methods
+            assert "arg0" not in (attr.__doc__ or "")
+
+
+def test_str_signature():
+    for enum_type in [m.ScopedEnum, m.UnscopedEnum]:
+        assert enum_type.__str__.__doc__.startswith("__str__")
+
+
+def test_enum_custom_str_keeps_name_property():
+    assert str(m.CustomStrEnum.A) == "CustomStrEnum value 1"
+    assert str(m.CustomStrEnum.B) == "CustomStrEnum value 2"
+    assert m.CustomStrEnum.A.name == "A"
+    assert m.CustomStrEnum.A.value == 1
+    assert m.CustomStrEnum.B.name == "B"
+    assert m.CustomStrEnum.B.value == 2
+
+
+def test_generated_dunder_methods_pos_only():
+    for enum_type in [m.ScopedEnum, m.UnscopedEnum]:
+        for binary_op in [
+            "__eq__",
+            "__ne__",
+            "__ge__",
+            "__gt__",
+            "__lt__",
+            "__le__",
+            "__and__",
+            "__rand__",
+            # "__or__",  # fail with some compilers (__doc__ = "Return self|value.")
+            # "__ror__",  # fail with some compilers (__doc__ = "Return value|self.")
+            "__xor__",
+            "__rxor__",
+            "__rxor__",
+        ]:
+            method = getattr(enum_type, binary_op, None)
+            if method is not None:
+                # 1) The docs must start with the name of the op.
+                assert (
+                    re.match(
+                        rf"^{binary_op}\(",
+                        method.__doc__,
+                    )
+                    is not None
+                )
+                # 2) The docs must contain the op's signature. This is a separate check
+                # and not anchored at the start because the op may be overloaded.
+                assert (
+                    re.search(
+                        rf"{binary_op}\(self: [\w\.]+, other: [\w\.]+, /\)",
+                        method.__doc__,
+                    )
+                    is not None
+                )
+        for unary_op in [
+            "__int__",
+            "__index__",
+            "__hash__",
+            "__str__",
+            "__repr__",
+        ]:
+            method = getattr(enum_type, unary_op, None)
+            if method is not None:
+                assert (
+                    re.match(
+                        rf"^{unary_op}\(self: [\w\.]+, /\)",
+                        method.__doc__,
+                    )
+                    is not None
+                )
+        assert (
+            re.match(
+                r"^__getstate__\(self: [\w\.]+, /\)",
+                enum_type.__getstate__.__doc__,
+            )
+            is not None
+        )
+        assert (
+            re.match(
+                r"^__setstate__\(self: [\w\.]+, state: [\w\. \|]+, /\)",
+                enum_type.__setstate__.__doc__,
+            )
+            is not None
+        )
+
+
+@pytest.mark.skipif(
+    isinstance(m.obj_cast_UnscopedEnum_ptr, str), reason=m.obj_cast_UnscopedEnum_ptr
+)
+def test_obj_cast_unscoped_enum_ptr():
+    assert m.obj_cast_UnscopedEnum_ptr(m.UnscopedEnum.ETwo) == 2
+    assert m.obj_cast_UnscopedEnum_ptr(m.UnscopedEnum.EOne) == 1
+    assert m.obj_cast_UnscopedEnum_ptr(None) == 0

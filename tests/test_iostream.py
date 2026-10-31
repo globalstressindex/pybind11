@@ -1,39 +1,23 @@
-from pybind11_tests import iostream as m
+from __future__ import annotations
+
 import sys
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 
-from contextlib import contextmanager
+import pytest
 
-try:
-    # Python 3
-    from io import StringIO
-except ImportError:
-    # Python 2
-    try:
-        from cStringIO import StringIO
-    except ImportError:
-        from StringIO import StringIO
+import env
+from pybind11_tests import iostream as m
 
-try:
-    # Python 3.4
-    from contextlib import redirect_stdout
-except ImportError:
-    @contextmanager
-    def redirect_stdout(target):
-        original = sys.stdout
-        sys.stdout = target
-        yield
-        sys.stdout = original
-
-try:
-    # Python 3.5
-    from contextlib import redirect_stderr
-except ImportError:
-    @contextmanager
-    def redirect_stderr(target):
-        original = sys.stderr
-        sys.stderr = target
-        yield
-        sys.stderr = original
+if env.WIN:
+    wv_build = sys.getwindowsversion().build
+    skip_if_ge = 26100
+    if wv_build >= skip_if_ge:
+        pytest.skip(
+            f"Windows build {wv_build} >= {skip_if_ge}:"
+            " Skipping iostream capture (redirection regression needs investigation)",
+            allow_module_level=True,
+        )
 
 
 def test_captured(capsys):
@@ -41,17 +25,118 @@ def test_captured(capsys):
     m.captured_output(msg)
     stdout, stderr = capsys.readouterr()
     assert stdout == msg
-    assert stderr == ''
+    assert not stderr
 
     m.captured_output_default(msg)
     stdout, stderr = capsys.readouterr()
     assert stdout == msg
-    assert stderr == ''
+    assert not stderr
 
     m.captured_err(msg)
     stdout, stderr = capsys.readouterr()
-    assert stdout == ''
+    assert not stdout
     assert stderr == msg
+
+
+def test_captured_large_string(capsys):
+    # Make this bigger than the buffer used on the C++ side: 1024 chars
+    msg = "I've been redirected to Python, I hope!"
+    msg = msg * (1024 // len(msg) + 1)
+
+    m.captured_output_default(msg)
+    stdout, stderr = capsys.readouterr()
+    assert stdout == msg
+    assert not stderr
+
+
+def test_captured_utf8_2byte_offset0(capsys):
+    msg = "\u07ff"
+    msg = "" + msg * (1024 // len(msg) + 1)
+
+    m.captured_output_default(msg)
+    stdout, stderr = capsys.readouterr()
+    assert stdout == msg
+    assert not stderr
+
+
+def test_captured_utf8_2byte_offset1(capsys):
+    msg = "\u07ff"
+    msg = "1" + msg * (1024 // len(msg) + 1)
+
+    m.captured_output_default(msg)
+    stdout, stderr = capsys.readouterr()
+    assert stdout == msg
+    assert not stderr
+
+
+def test_captured_utf8_3byte_offset0(capsys):
+    msg = "\uffff"
+    msg = "" + msg * (1024 // len(msg) + 1)
+
+    m.captured_output_default(msg)
+    stdout, stderr = capsys.readouterr()
+    assert stdout == msg
+    assert not stderr
+
+
+def test_captured_utf8_3byte_offset1(capsys):
+    msg = "\uffff"
+    msg = "1" + msg * (1024 // len(msg) + 1)
+
+    m.captured_output_default(msg)
+    stdout, stderr = capsys.readouterr()
+    assert stdout == msg
+    assert not stderr
+
+
+def test_captured_utf8_3byte_offset2(capsys):
+    msg = "\uffff"
+    msg = "12" + msg * (1024 // len(msg) + 1)
+
+    m.captured_output_default(msg)
+    stdout, stderr = capsys.readouterr()
+    assert stdout == msg
+    assert not stderr
+
+
+def test_captured_utf8_4byte_offset0(capsys):
+    msg = "\U0010ffff"
+    msg = "" + msg * (1024 // len(msg) + 1)
+
+    m.captured_output_default(msg)
+    stdout, stderr = capsys.readouterr()
+    assert stdout == msg
+    assert not stderr
+
+
+def test_captured_utf8_4byte_offset1(capsys):
+    msg = "\U0010ffff"
+    msg = "1" + msg * (1024 // len(msg) + 1)
+
+    m.captured_output_default(msg)
+    stdout, stderr = capsys.readouterr()
+    assert stdout == msg
+    assert not stderr
+
+
+def test_captured_utf8_4byte_offset2(capsys):
+    msg = "\U0010ffff"
+    msg = "12" + msg * (1024 // len(msg) + 1)
+
+    m.captured_output_default(msg)
+    stdout, stderr = capsys.readouterr()
+    assert stdout == msg
+    assert not stderr
+
+
+def test_captured_utf8_4byte_offset3(capsys):
+    msg = "\U0010ffff"
+    msg = "123" + msg * (1024 // len(msg) + 1)
+
+    m.captured_output_default(msg)
+    stdout, stderr = capsys.readouterr()
+    assert stdout == msg
+    assert not stderr
 
 
 def test_guard_capture(capsys):
@@ -59,7 +144,7 @@ def test_guard_capture(capsys):
     m.guard_output(msg)
     stdout, stderr = capsys.readouterr()
     assert stdout == msg
-    assert stderr == ''
+    assert not stderr
 
 
 def test_series_captured(capture):
@@ -75,16 +160,16 @@ def test_flush(capfd):
 
     with m.ostream_redirect():
         m.noisy_function(msg, flush=False)
-        stdout, stderr = capfd.readouterr()
-        assert stdout == ''
+        stdout, _stderr = capfd.readouterr()
+        assert not stdout
 
         m.noisy_function(msg2, flush=True)
-        stdout, stderr = capfd.readouterr()
+        stdout, _stderr = capfd.readouterr()
         assert stdout == msg + msg2
 
         m.noisy_function(msg, flush=False)
 
-    stdout, stderr = capfd.readouterr()
+    stdout, _stderr = capfd.readouterr()
     assert stdout == msg
 
 
@@ -95,15 +180,15 @@ def test_not_captured(capfd):
         m.raw_output(msg)
     stdout, stderr = capfd.readouterr()
     assert stdout == msg
-    assert stderr == ''
-    assert stream.getvalue() == ''
+    assert not stderr
+    assert not stream.getvalue()
 
     stream = StringIO()
     with redirect_stdout(stream):
         m.captured_output(msg)
     stdout, stderr = capfd.readouterr()
-    assert stdout == ''
-    assert stderr == ''
+    assert not stdout
+    assert not stderr
     assert stream.getvalue() == msg
 
 
@@ -113,16 +198,16 @@ def test_err(capfd):
     with redirect_stderr(stream):
         m.raw_err(msg)
     stdout, stderr = capfd.readouterr()
-    assert stdout == ''
+    assert not stdout
     assert stderr == msg
-    assert stream.getvalue() == ''
+    assert not stream.getvalue()
 
     stream = StringIO()
     with redirect_stderr(stream):
         m.captured_err(msg)
     stdout, stderr = capfd.readouterr()
-    assert stdout == ''
-    assert stderr == ''
+    assert not stdout
+    assert not stderr
     assert stream.getvalue() == msg
 
 
@@ -133,9 +218,9 @@ def test_multi_captured(capfd):
         m.raw_output("b")
         m.captured_output("c")
         m.raw_output("d")
-    stdout, stderr = capfd.readouterr()
-    assert stdout == 'bd'
-    assert stream.getvalue() == 'ac'
+    stdout, _stderr = capfd.readouterr()
+    assert stdout == "bd"
+    assert stream.getvalue() == "ac"
 
 
 def test_dual(capsys):
@@ -150,24 +235,23 @@ def test_redirect(capfd):
     stream = StringIO()
     with redirect_stdout(stream):
         m.raw_output(msg)
-    stdout, stderr = capfd.readouterr()
+    stdout, _stderr = capfd.readouterr()
     assert stdout == msg
-    assert stream.getvalue() == ''
+    assert not stream.getvalue()
 
     stream = StringIO()
-    with redirect_stdout(stream):
-        with m.ostream_redirect():
-            m.raw_output(msg)
-    stdout, stderr = capfd.readouterr()
-    assert stdout == ''
+    with redirect_stdout(stream), m.ostream_redirect():
+        m.raw_output(msg)
+    stdout, _stderr = capfd.readouterr()
+    assert not stdout
     assert stream.getvalue() == msg
 
     stream = StringIO()
     with redirect_stdout(stream):
         m.raw_output(msg)
-    stdout, stderr = capfd.readouterr()
+    stdout, _stderr = capfd.readouterr()
     assert stdout == msg
-    assert stream.getvalue() == ''
+    assert not stream.getvalue()
 
 
 def test_redirect_err(capfd):
@@ -175,13 +259,12 @@ def test_redirect_err(capfd):
     msg2 = "StdErr"
 
     stream = StringIO()
-    with redirect_stderr(stream):
-        with m.ostream_redirect(stdout=False):
-            m.raw_output(msg)
-            m.raw_err(msg2)
+    with redirect_stderr(stream), m.ostream_redirect(stdout=False):
+        m.raw_output(msg)
+        m.raw_err(msg2)
     stdout, stderr = capfd.readouterr()
     assert stdout == msg
-    assert stderr == ''
+    assert not stderr
     assert stream.getvalue() == msg2
 
 
@@ -191,13 +274,72 @@ def test_redirect_both(capfd):
 
     stream = StringIO()
     stream2 = StringIO()
-    with redirect_stdout(stream):
-        with redirect_stderr(stream2):
-            with m.ostream_redirect():
-                m.raw_output(msg)
-                m.raw_err(msg2)
+    with redirect_stdout(stream), redirect_stderr(stream2), m.ostream_redirect():
+        m.raw_output(msg)
+        m.raw_err(msg2)
     stdout, stderr = capfd.readouterr()
-    assert stdout == ''
-    assert stderr == ''
+    assert not stdout
+    assert not stderr
     assert stream.getvalue() == msg
     assert stream2.getvalue() == msg2
+
+
+def test_redirect_reentry(capfd):
+    # Re-entering the same ``ostream_redirect`` (``__enter__`` twice with no ``__exit__``
+    # in between, e.g. nesting the same context manager) must not leave std::cout bound
+    # to a freed streambuf. Before the fix the inner redirect recorded a pointer to the
+    # buffer owned by the outer redirect that was about to be destroyed, so a later write
+    # to std::cout was a use-after-free.
+    redirect = m.ostream_redirect(stdout=True, stderr=False)
+    redirect.__enter__()
+    redirect.__enter__()
+    redirect.__exit__()
+    m.raw_output("alive")
+    stdout, stderr = capfd.readouterr()
+    assert stdout == "alive"
+    assert not stderr
+
+
+def test_move_redirect(capsys):
+    m.move_redirect_output("before_move", "after_move")
+    stdout, stderr = capsys.readouterr()
+    assert stdout == "before_moveafter_move"
+    assert not stderr
+
+
+def test_move_redirect_unflushed(capsys):
+    m.move_redirect_output_unflushed("before_move", "after_move")
+    stdout, stderr = capsys.readouterr()
+    assert stdout == "before_moveafter_move"
+    assert not stderr
+
+
+def test_move_redirect_null_rdbuf(capsys):
+    m.move_redirect_null_rdbuf("hello")
+    stdout, stderr = capsys.readouterr()
+    assert stdout == "hellohello"
+    assert not stderr
+
+
+def test_null_rdbuf_restored():
+    assert m.get_null_rdbuf_restored("test")
+
+
+@pytest.mark.skipif(sys.platform.startswith("emscripten"), reason="Requires threads")
+def test_threading():
+    with m.ostream_redirect(stdout=True, stderr=False):
+        # start some threads
+        threads = [m.TestThread() for _j in range(20)]
+
+        # give the threads some time to fail
+        threads[0].sleep()
+
+        # stop all the threads
+        for t in threads:
+            t.stop()
+
+        for t in threads:
+            t.join()
+
+        # if a thread segfaults, we don't get here
+        assert True

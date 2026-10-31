@@ -1,11 +1,20 @@
-from ._version import version_info, __version__  # noqa: F401 imported but unused
+from __future__ import annotations
+
+import sys
+
+if sys.version_info < (3, 9):  # noqa: UP036
+    msg = "pybind11 does not support Python < 3.9. v3.0 was the last release supporting Python 3.8."
+    raise ImportError(msg)
 
 
-def get_include(*args, **kwargs):
-    import os
-    try:
-        from pip import locations
-        return os.path.dirname(
-            locations.distutils_scheme('pybind11', *args, **kwargs)['headers'])
-    except ImportError:
-        return 'include'
+from ._version import __version__, version_info
+from .commands import get_cmake_dir, get_include, get_pkgconfig_dir, get_source_dir
+
+__all__ = (
+    "__version__",
+    "get_cmake_dir",
+    "get_include",
+    "get_pkgconfig_dir",
+    "get_source_dir",
+    "version_info",
+)

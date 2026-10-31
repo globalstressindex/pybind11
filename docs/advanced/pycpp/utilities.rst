@@ -7,11 +7,13 @@ Using Python's print function in C++
 The usual way to write output in C++ is using ``std::cout`` while in Python one
 would use ``print``. Since these methods use different buffers, mixing them can
 lead to output order issues. To resolve this, pybind11 modules can use the
-:func:`py::print` function which writes to Python's ``sys.stdout`` for consistency.
+:func:`py::print` function, which writes through Python's printing machinery.
 
-Python's ``print`` function is replicated in the C++ API including optional
-keyword arguments ``sep``, ``end``, ``file``, ``flush``. Everything works as
-expected in Python:
+:func:`py::print` delegates each call to the ``print`` entry in the current
+execution frame's built-ins (normally ``builtins.print``). When no Python frame
+is executing, it uses the active interpreter's built-ins. With the standard
+built-in, optional keyword arguments ``sep``, ``end``, ``file``, and ``flush``
+work as they do in Python:
 
 .. code-block:: cpp
 
@@ -21,6 +23,10 @@ expected in Python:
     auto args = py::make_tuple("unpacked", true);
     py::print("->", *args, "end"_a="<-"); // -> unpacked True <-
 
+With the standard built-in, omitting ``file`` or passing
+``"file"_a = py::none()`` uses the current ``sys.stdout``. Other output and
+error behavior is likewise supplied by the active Python runtime.
+
 .. _ostream_redirect:
 
 Capturing standard output from ostream
@@ -28,7 +34,7 @@ Capturing standard output from ostream
 
 Often, a library will use the streams ``std::cout`` and ``std::cerr`` to print,
 but this does not play well with Python's standard ``sys.stdout`` and ``sys.stderr``
-redirection. Replacing a library's printing with `py::print <print>` may not
+redirection. Replacing a library's printing with ``py::print <print>`` may not
 be feasible. This can be fixed using a guard around the library function that
 redirects output to the corresponding Python streams:
 
@@ -42,20 +48,31 @@ redirects output to the corresponding Python streams:
     m.def("noisy_func", []() {
         py::scoped_ostream_redirect stream(
             std::cout,                               // std::ostream&
-            py::module::import("sys").attr("stdout") // Python output
+            py::module_::import("sys").attr("stdout") // Python output
         );
         call_noisy_func();
     });
+
+.. warning::
+
+    The implementation in ``pybind11/iostream.h`` is NOT thread safe. Multiple
+    threads writing to a redirected ostream concurrently cause data races
+    and potentially buffer overflows. Therefore it is currently a requirement
+    that all (possibly) concurrent redirected ostream writes are protected by
+    a mutex. #HelpAppreciated: Work on iostream.h thread safety. For more
+    background see the discussions under
+    `PR #2982 <https://github.com/pybind/pybind11/pull/2982>`_ and
+    `PR #2995 <https://github.com/pybind/pybind11/pull/2995>`_.
 
 This method respects flushes on the output streams and will flush if needed
 when the scoped guard is destroyed. This allows the output to be redirected in
 real time, such as to a Jupyter notebook. The two arguments, the C++ stream and
 the Python output, are optional, and default to standard output if not given. An
-extra type, `py::scoped_estream_redirect <scoped_estream_redirect>`, is identical
+extra type, ``py::scoped_estream_redirect <scoped_estream_redirect>``, is identical
 except for defaulting to ``std::cerr`` and ``sys.stderr``; this can be useful with
-`py::call_guard`, which allows multiple items, but uses the default constructor:
+``py::call_guard``, which allows multiple items, but uses the default constructor:
 
-.. code-block:: py
+.. code-block:: cpp
 
     // Alternative: Call single function using call guard
     m.def("noisy_func", &call_noisy_function,
@@ -63,7 +80,7 @@ except for defaulting to ``std::cerr`` and ``sys.stderr``; this can be useful wi
                          py::scoped_estream_redirect>());
 
 The redirection can also be done in Python with the addition of a context
-manager, using the `py::add_ostream_redirect() <add_ostream_redirect>` function:
+manager, using the ``py::add_ostream_redirect() <add_ostream_redirect>`` function:
 
 .. code-block:: cpp
 
@@ -92,7 +109,7 @@ arguments to disable one of the streams if needed.
 Evaluating Python expressions from strings and files
 ====================================================
 
-pybind11 provides the `eval`, `exec` and `eval_file` functions to evaluate
+pybind11 provides the ``eval``, ``exec`` and ``eval_file`` functions to evaluate
 Python expressions and statements. The following example illustrates how they
 can be used.
 
@@ -104,7 +121,7 @@ can be used.
     ...
 
     // Evaluate in scope of main module
-    py::object scope = py::module::import("__main__").attr("__dict__");
+    py::object scope = py::module_::import("__main__").attr("__dict__");
 
     // Evaluate an isolated expression
     int result = py::eval("my_variable + 10", scope).cast<int>();
